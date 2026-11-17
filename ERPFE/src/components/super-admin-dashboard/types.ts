@@ -1,4 +1,11 @@
-export type PlatformSection = "overview" | "schools" | "plans" | "billing" | "reports" | "audit" | "settings";
+export type PlatformSection =
+  | "overview"
+  | "schools"
+  | "plans"
+  | "billing"
+  | "reports"
+  | "audit"
+  | "settings";
 
 export type School = {
   id: string;
@@ -9,6 +16,7 @@ export type School = {
   branch: string;
   status: "active" | "provisioning" | "suspended" | "failed";
   joined: string;
+  customDomain?: string | null;
 };
 
 export type Plan = {
