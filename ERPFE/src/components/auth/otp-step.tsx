@@ -22,6 +22,7 @@ import { formatClock, useCountdown } from "@/hooks/use-countdown";
 import { useAuthFlow } from "@/store/auth-flow-store";
 import { usePendingCredentials } from "@/store/pending-credentials-store";
 import { useOptionalTenant } from "@/providers/tenant-provider";
+import { schoolPath } from "@/lib/tenant-slug";
 import { toast } from "sonner";
 
 type Status = "idle" | "verifying" | "error" | "success";
@@ -52,7 +53,6 @@ export function OtpStep() {
   const destination = useAuthFlow((s) => s.destination);
   const expiresAt = useAuthFlow((s) => s.expiresAt);
   const backToCredentials = useAuthFlow((s) => s.backToCredentials);
-  const clearFlow = useAuthFlow((s) => s.clearFlow);
 
   const expiresIn = useCountdown(expiresAt);
   // State, not a ref: Next 16's react-hooks/refs rule rejects reading a ref
@@ -99,6 +99,30 @@ export function OtpStep() {
     const id = setInterval(() => setCooldown((c) => c - 1), 1000);
     return () => clearInterval(id);
   }, [cooldown]);
+
+  // Warm the dashboard while the person is still typing the code, so the
+  // hand-off after verification is a screen swap rather than a download.
+  useEffect(() => {
+    router.prefetch(slug ? schoolPath(slug, "/dashboard") : "/dashboard");
+  }, [router, slug]);
+
+  // Clearing the flow store resets this page to step 1 ("Identify"). Doing that
+  // BEFORE router.replace() finished flipped the still-mounted login page back
+  // to the sign-in form - that is the login screen people saw flashing for a
+  // moment before the dashboard. Reset it when this screen actually leaves
+  // instead, with a safety timer in case a slow redirect keeps us mounted.
+  useEffect(() => {
+    if (!done) return;
+    const forgetChallenge = () => {
+      useAuthFlow.getState().clearFlow();
+      usePendingCredentials.getState().clearPending();
+    };
+    const safety = window.setTimeout(forgetChallenge, 4000);
+    return () => {
+      window.clearTimeout(safety);
+      forgetChallenge();
+    };
+  }, [done]);
 
   /** "Resend" = a fresh login, because the backend has no resend endpoint. */
   async function resendCode() {
@@ -161,8 +185,8 @@ export function OtpStep() {
         mustChangePassword: granted.mustChangePassword,
       });
 
-      clearFlow();
-      usePendingCredentials.getState().clearPending();
+      // The challenge is cleared when this screen unmounts (see the effect
+      // above) - not here, or the login form would flash back into view.
       toast.success(
         granted.mustChangePassword
           ? "You need a new password"

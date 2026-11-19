@@ -6,7 +6,7 @@ import { TenantProvider } from "@/providers/tenant-provider";
 import { TenantThemeStyle } from "@/components/tenant/tenant-theme-style";
 import { connection } from "next/server";
 
-type Props = { params: Promise<{ tenant: string }> };
+type Props = { params: Promise<{ tenant?: string } | any> };
 
 async function DynamicMarker() {
   await connection();

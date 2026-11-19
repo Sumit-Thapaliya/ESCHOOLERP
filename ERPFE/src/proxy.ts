@@ -18,13 +18,13 @@ export function proxy(req: NextRequest) {
   const slug = getTenantSlug(req.headers.get("host") ?? "");
   const { pathname } = req.nextUrl;
 
-  // Root domain: marketing site. Block direct access to internal tenant routes.
-  if (!slug) {
-    if (pathname.startsWith("/t/")) {
-      return NextResponse.rewrite(new URL("/404", req.url));
-    }
-    return NextResponse.next();
-  }
+  // Root domain: the marketing site, plus PATH-BASED school access
+  // (/t/<slug>/students/...). Those paths are what schoolPath() builds, and
+  // every preview or local deploy runs on a root domain with no subdomain -
+  // rewriting them to /404 is what turned "click a student" into a dead end.
+  // An unknown or inactive school is still refused by
+  // src/app/t/[tenant]/layout.tsx, which calls notFound() itself.
+  if (!slug) return NextResponse.next();
 
   // Tenant subdomain: rewrite to /t/<slug>/<path>
   const url = req.nextUrl.clone();

@@ -56,6 +56,14 @@ export async function getTenant(slug: string): Promise<Tenant | null> {
       theme: data.theme ?? null,
     };
   } catch (err) {
+    // Backend unreachable. NEVER fabricate a live school in production: a
+    // suspended or unknown slug must stay unreachable, and an outage must not
+    // conjure a login page for a school that may not exist. Dev keeps the
+    // convenience fallback so a dead backend does not block UI work.
+    if (process.env.NODE_ENV === "production") {
+      console.warn(`[getTenant] Backend unreachable for ${slug}:`, err);
+      return null;
+    }
     console.warn(`[getTenant] Backend offline for ${slug}, using local fallback:`, err);
     return {
       slug,

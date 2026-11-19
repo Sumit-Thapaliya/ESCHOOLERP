@@ -1,770 +1,1073 @@
 "use client";
 
 import * as React from "react";
+import Link from "next/link";
 import {
+  AlertCircle,
   ArrowLeft,
-  Printer,
-  Edit3,
-  Calendar,
-  Phone,
-  Mail,
-  MapPin,
-  Bus,
-  CheckCircle2,
-  FileText,
-  HeartPulse,
-  GraduationCap,
   Banknote,
   CalendarCheck2,
-  Download,
-  ExternalLink,
+  CalendarDays,
+  CheckCircle2,
+  Clock,
+  FileText,
+  GraduationCap,
+  Hash,
+  HeartPulse,
+  History,
+  Layers,
+  Landmark,
+  Mail,
+  MapPin,
+  Pencil,
+  Plus,
+  Phone,
+  Printer,
+  RefreshCw,
   ShieldCheck,
-  AlertCircle,
-  Building2,
+  Trophy,
+  UserRound,
+  Users,
+  X,
 } from "lucide-react";
-import type { Student, StudentStatus } from "./student-types";
-import { StudentIdCardModal } from "./student-id-card-modal";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import {
+  getStudent,
+  getStudentHealth,
+  getStudentStatusHistory,
+  unlinkGuardian,
+} from "@/lib/api/school";
 import { toast } from "sonner";
+import { AddGuardianModal } from "./add-guardian-modal";
+import { useHasPermission } from "@/store/session-store";
+import { useOptionalTenant } from "@/providers/tenant-provider";
+import { schoolPath } from "@/lib/tenant-slug";
+import { StudentIdCardModal } from "./student-id-card-modal";
 import { cn } from "cn";
+import { initialsOfName } from "@/lib/initials";
 
 interface StudentProfilePageViewProps {
-  student: Student;
+  studentId: string;
   onBack: () => void;
+  /**
+   * Where the breadcrumb links back to. Optional on purpose: when a caller
+   * omits it, the path is derived from the school in the URL, so an older call
+   * site (or a new one) can never break the page with a missing prop.
+   */
+  directoryHref?: string;
 }
 
-type TabType =
-  | "personal"
+type TabId =
+  | "overview"
   | "academic"
   | "documents"
   | "health"
   | "fees"
-  | "attendance";
+  | "attendance"
+  | "exams"
+  | "history";
 
-export function StudentProfilePageView({
-  student,
-  onBack,
-}: StudentProfilePageViewProps) {
-  const [activeTab, setActiveTab] = React.useState<TabType>("personal");
-  const [currentStatus, setCurrentStatus] = React.useState<StudentStatus>(
-    student.status
-  );
-  const [idCardOpen, setIdCardOpen] = React.useState(false);
+const TABS: { id: TabId; label: string; icon: React.ComponentType<{ className?: string }> }[] = [
+  { id: "overview", label: "Overview", icon: UserRound },
+  { id: "academic", label: "Academic Performance", icon: Trophy },
+  { id: "documents", label: "Documents", icon: FileText },
+  { id: "health", label: "Health Records", icon: HeartPulse },
+  { id: "fees", label: "Fees & Dues", icon: Banknote },
+  { id: "attendance", label: "Attendance", icon: CalendarCheck2 },
+  { id: "exams", label: "Exam History", icon: FileText },
+  { id: "history", label: "Status History", icon: History },
+];
 
-  const handleStatusChange = (newStatus: StudentStatus) => {
-    setCurrentStatus(newStatus);
-    toast.success(`Student status changed to ${newStatus}`);
-  };
+const STATUS_STYLE: Record<string, string> = {
+  active: "border-[#B4EFD2] bg-[#EAFBF2] text-[#0E9F6E]",
+  applicant: "border-[#BAE6FD] bg-[#F0F9FF] text-[#0369A1]",
+  suspended: "border-rose-200 bg-rose-50 text-rose-700",
+  dropped: "border-rose-200 bg-rose-50 text-rose-700",
+  transferred_out: "border-slate-200 bg-slate-100 text-slate-700",
+  alumni: "border-slate-200 bg-slate-100 text-slate-700",
+};
 
-  const getStatusBadge = (status: StudentStatus) => {
-    switch (status) {
-      case "Active":
-        return "bg-emerald-50 text-emerald-700 border-emerald-200";
-      case "On leave":
-        return "bg-amber-50 text-amber-700 border-amber-200";
-      case "Suspended":
-        return "bg-rose-50 text-rose-700 border-rose-200";
-      case "Alumni":
-      default:
-        return "bg-slate-100 text-slate-700 border-slate-200";
-    }
-  };
+const pretty = (v: string) => v.replace(/_/g, " ").toLowerCase();
+const dateTime = (v: string | null) => (v ? new Date(v).toLocaleString() : null);
 
-  const primaryGuardian = student.guardians[0];
-
+/** A labelled value in the Personal Information list. */
+function Field({ label, value }: { label: string; value: React.ReactNode }) {
+  const empty = value === null || value === undefined || value === "";
   return (
-    <div className="space-y-6 pb-16">
-      {/* Top Navigation & Breadcrumb */}
-      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-[#DDE5F0] pb-4">
-        <div className="flex items-center gap-3">
+    <div className="flex items-baseline gap-3 border-b border-[#F2F6FC] py-[7.5px] last:border-0">
+      <span className="w-[118px] shrink-0 text-[13px] leading-snug text-[#7C8DA3]">{label}</span>
+      <span
+        className={cn(
+          "min-w-0 flex-1 truncate text-[13.5px] font-semibold tracking-[-0.005em]",
+          empty ? "font-normal text-[#A9B6C5]" : "text-[#1B3049]"
+        )}
+      >
+        {empty ? "Not recorded" : value}
+      </span>
+    </div>
+  );
+}
+
+/** One of the three counters beside the hero. */
+function MiniStat({
+  icon: Icon,
+  label,
+  value,
+  badge,
+  caption,
+  tone,
+  muted,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  badge: string;
+  caption: string;
+  tone: "blue" | "violet" | "green";
+  muted?: boolean;
+}) {
+  const tones = {
+    blue: "bg-[#EFF6FF] text-[#3B82F6]",
+    violet: "bg-[#F5F3FF] text-[#8B5CF6]",
+    green: "bg-[#ECFDF5] text-[#10B981]",
+  } as const;
+  return (
+    <div className="flex h-full flex-col justify-center gap-3.5 rounded-2xl border border-[#E7EDF6] bg-white px-4 py-4 shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-[#CFDFF3] hover:shadow-xs">
+      <div className="flex items-center gap-2">
+        <span className={cn("grid h-7 w-7 place-items-center rounded-lg", tones[tone])}>
+          <Icon className="h-4 w-4" />
+        </span>
+        <span className="text-[12.5px] font-bold leading-tight tracking-[-0.004em] text-[#4E6076]">
+          {label}
+        </span>
+      </div>
+
+      <div className="flex flex-col gap-[9px]">
+        <p className="text-[26px] font-bold leading-none tracking-[-0.03em] text-[#0D2038] tabular-nums">
+          {value}
+        </p>
+        <div className="flex flex-col items-start gap-1.5">
+          <span
+            className={cn(
+              "inline-flex w-fit items-center rounded-full px-2 py-[3px] text-[11.5px] font-semibold tracking-[0.004em]",
+              muted ? "bg-[#F1F5F9] text-[#64748B]" : "bg-[#EAFBF2] text-[#0E9F6E]"
+            )}
+          >
+            {badge}
+          </span>
+          <p className="text-[11.5px] leading-snug text-[#93A3B6]">{caption}</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/** Honest panel for a module that has no backend yet. */
+function PendingModule({
+  icon: Icon,
+  title,
+  detail,
+  action,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  title: string;
+  detail: string;
+  action?: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-2xl border border-dashed border-[#E1E9F4] bg-white px-6 py-10 text-center shadow-2xs">
+      <Icon className="mx-auto h-[30px] w-[30px] text-[#C7D3E1]" />
+      <h3 className="mt-3 text-[15px] font-semibold tracking-[-0.012em] text-[#16293F]">{title}</h3>
+      <p className="mx-auto mt-1.5 max-w-[450px] text-[13px] leading-[1.65] text-[#6B7C91]">
+        {detail}
+      </p>
+      {action && <div className="mt-4 flex items-center justify-center gap-2">{action}</div>}
+    </div>
+  );
+}
+
+/** Disabled button used inside the honest panels. */
+function DisabledAction({
+  icon: Icon,
+  label,
+  title,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  title: string;
+}) {
+  return (
+    <button
+      type="button"
+      disabled
+      title={title}
+      className="inline-flex items-center gap-1.5 rounded-full border border-[#EDF2F8] px-3 py-1.5 text-[12.5px] font-semibold text-[#C3CDDA]"
+    >
+      <Icon className="h-3.5 w-3.5" />
+      {label}
+    </button>
+  );
+}
+
+/** The graduation-cap illustration in the hero, drawn inline (no image request). */
+function HeroIllustration() {
+  return (
+    <svg
+      viewBox="0 0 210 150"
+      className="pointer-events-none hidden h-[118px] w-auto shrink-0 sm:block"
+      aria-hidden="true"
+    >
+      <defs>
+        <linearGradient id="capGrad" x1="0" y1="0" x2="1" y2="1">
+          <stop offset="0%" stopColor="#6C9BEA" />
+          <stop offset="100%" stopColor="#3268C4" />
+        </linearGradient>
+        <linearGradient id="bookTopGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#F6FAFF" />
+          <stop offset="100%" stopColor="#C9DCF6" />
+        </linearGradient>
+        <linearGradient id="bookSideGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#C3D7F2" />
+          <stop offset="100%" stopColor="#9FBCE4" />
+        </linearGradient>
+      </defs>
+      <ellipse cx="105" cy="135" rx="80" ry="8" fill="#C6DAF3" opacity="0.7" />
+      <rect x="26" y="104" width="158" height="24" rx="6" fill="url(#bookSideGrad)" />
+      <rect x="26" y="100" width="158" height="14" rx="6" fill="url(#bookTopGrad)" />
+      <rect x="40" y="84" width="130" height="22" rx="6" fill="#B9D0EE" />
+      <rect x="40" y="80" width="130" height="13" rx="6" fill="#E4EEFB" />
+      <rect x="54" y="64" width="102" height="20" rx="6" fill="#CFDFF4" />
+      <rect x="54" y="60" width="102" height="12" rx="6" fill="#EFF5FE" />
+      <path d="M105 18 196 52 105 86 14 52z" fill="url(#capGrad)" />
+      <path d="M60 64v22c0 8 20 14 45 14s45-6 45-14V64l-45 18z" fill="#457FD4" />
+      <path
+        d="M105 18 196 52 105 86 14 52z"
+        fill="none"
+        stroke="#2E60B4"
+        strokeWidth="1.8"
+        strokeLinejoin="round"
+      />
+      <circle cx="105" cy="52" r="4.6" fill="#F7CD68" />
+      <path d="M184 57v20" stroke="#F7CD68" strokeWidth="2.6" strokeLinecap="round" />
+      <path d="M184 77l-4.6 9h9.2z" fill="#F7CD68" />
+    </svg>
+  );
+}
+
+/**
+ * Student profile, laid out as the school-portal reference:
+ * hero with identity + admission facts, three real counters beside it,
+ * an icon tab bar, Personal Information + Guardians side by side, and the
+ * admission record strip underneath.
+ *
+ * Every value comes from GET /students/{id}. Where a module has no backend yet
+ * (academics, files, fees, attendance, exams) the tab says so instead of
+ * inventing numbers.
+ */
+export function StudentProfilePageView({
+  studentId,
+  onBack,
+  directoryHref,
+}: StudentProfilePageViewProps) {
+  const tenantCtx = useOptionalTenant();
+  // The directory URL this page belongs to. Prefer what the caller passed;
+  // otherwise rebuild it from the tenant slug in the current URL.
+  const studentsHref = React.useMemo(() => {
+    if (directoryHref) return directoryHref;
+    const slug = tenantCtx?.slug;
+    return slug ? schoolPath(slug, "/students") : "/students";
+  }, [directoryHref, tenantCtx?.slug]);
+
+  const [activeTab, setActiveTab] = React.useState<TabId>("overview");
+  const [idCardOpen, setIdCardOpen] = React.useState(false);
+  const [addGuardianOpen, setAddGuardianOpen] = React.useState(false);
+  const queryClient = useQueryClient();
+  const canReadHealth = useHasPermission("student.health.read");
+  const canReadSensitive = useHasPermission("person.sensitive.read");
+  const canUpdateStudent = useHasPermission("student.update");
+  const canCreateGuardian = useHasPermission("guardian.create");
+
+  const detail = useQuery({
+    queryKey: ["student", studentId],
+    queryFn: () => getStudent(studentId),
+  });
+  const history = useQuery({
+    queryKey: ["student-status-history", studentId],
+    queryFn: () => getStudentStatusHistory(studentId),
+  });
+  const health = useQuery({
+    queryKey: ["student-health", studentId],
+    queryFn: () => getStudentHealth(studentId),
+    enabled: canReadHealth,
+  });
+
+  // Unlinking leaves the guardian record in place; the server refuses if it
+  // would strand an active student without a primary guardian, and that reason
+  // is shown exactly as the API words it.
+  const unlink = useMutation({
+    mutationFn: (guardianId: string) => unlinkGuardian(studentId, guardianId),
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: ["student", studentId] });
+      void queryClient.invalidateQueries({ queryKey: ["students"] });
+      toast.success("Guardian unlinked. The guardian record itself stays on file.");
+    },
+    onError: (error: Error) =>
+      toast.error(error.message || "The guardian could not be unlinked."),
+  });
+
+  /* ---------------------------------------------------------------- loading */
+  if (detail.isLoading) {
+    return (
+      <div className="space-y-4 pb-14" aria-busy="true" aria-label="Loading student record">
+        <div className="grid gap-4 lg:grid-cols-12">
+          <div className="h-[148px] animate-pulse rounded-2xl bg-white lg:col-span-6" />
+          {[0, 1, 2].map((i) => (
+            <div key={i} className="h-[148px] animate-pulse rounded-2xl bg-white lg:col-span-2" />
+          ))}
+        </div>
+        <div className="h-11 animate-pulse rounded-xl bg-white" />
+        <div className="grid gap-4 lg:grid-cols-2">
+          <div className="h-72 animate-pulse rounded-2xl bg-white" />
+          <div className="h-72 animate-pulse rounded-2xl bg-white" />
+        </div>
+      </div>
+    );
+  }
+
+  /* ------------------------------------------------------------------ error */
+  if (detail.error || !detail.data) {
+    const reason =
+      detail.error instanceof Error && detail.error.message
+        ? detail.error.message
+        : "The record could not be fetched.";
+    return (
+      <div className="mx-auto mt-10 max-w-md rounded-2xl border border-[#DDE5F0] bg-white p-8 text-center shadow-2xs">
+        <AlertCircle className="mx-auto h-8 w-8 text-[#D64545]" />
+        <h2 className="mt-3 text-base font-semibold text-slate-900">
+          We couldn&apos;t load this student
+        </h2>
+        <p className="mt-1 text-sm text-slate-500">{reason}</p>
+        <div className="mt-5 flex items-center justify-center gap-2">
+          <button
+            type="button"
+            onClick={() => void detail.refetch()}
+            className="inline-flex cursor-pointer items-center gap-1.5 rounded-lg bg-[#2570D3] px-3.5 py-2 text-sm font-semibold text-white shadow-xs transition-all duration-200 hover:-translate-y-0.5 hover:bg-[#1C5BB0]"
+          >
+            <RefreshCw className="h-4 w-4" />
+            Try again
+          </button>
           <button
             type="button"
             onClick={onBack}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#DDE5F0] bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
+            className="cursor-pointer rounded-lg border border-[#DDE5F0] bg-white px-3.5 py-2 text-sm font-semibold text-slate-700 shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:bg-slate-50"
           >
-            <ArrowLeft className="h-3.5 w-3.5" />
-            <span>Back to directory</span>
-          </button>
-          <span className="text-slate-300">/</span>
-          <span className="text-xs text-slate-500">Student directory</span>
-          <span className="text-slate-300">/</span>
-          <span className="text-xs font-semibold text-[#2570D3]">
-            {student.fullName}
-          </span>
-        </div>
-
-        <div className="flex items-center gap-2">
-          <button
-            type="button"
-            onClick={() => setIdCardOpen(true)}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-[#DDE5F0] bg-white px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs cursor-pointer"
-          >
-            <Printer className="h-3.5 w-3.5 text-[#2570D3]" />
-            <span>Print ID card</span>
-          </button>
-          <button
-            type="button"
-            onClick={() => toast.info("Opening edit student modal")}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-[#2570D3] px-3.5 py-1.5 text-xs font-medium text-white shadow-xs hover:bg-[#1C5BB0] transition-colors cursor-pointer"
-          >
-            <Edit3 className="h-3.5 w-3.5" />
-            <span>Edit record</span>
+            Back to students
           </button>
         </div>
       </div>
+    );
+  }
 
-      {/* Main Page Title */}
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight text-slate-900">
-          Student Profile
-        </h1>
-        <p className="text-xs text-slate-500">
-          Comprehensive institutional record and student lifecycle history
-        </p>
+  const student = detail.data;
+  const person = student.person;
+  const initials = initialsOfName(person.displayName);
+  const primaryContact =
+    person.contacts.find((c) => c.type === "phone") ?? person.contacts[0] ?? null;
+  const emailContact = person.contacts.find((c) => c.type === "email") ?? null;
+  const address = person.addresses[0] ?? null;
+  const addressLine = address
+    ? [address.line1, address.ward, address.municipality, address.district]
+        .filter(Boolean)
+        .join(", ")
+    : null;
+  const primaryGuardian = student.guardians.find((g) => g.isPrimary) ?? student.guardians[0] ?? null;
+
+  const statusLabel = pretty(student.status);
+  const statusClasses = STATUS_STYLE[student.status] ?? "border-slate-200 bg-slate-100 text-slate-700";
+  const admissionYear = student.admissionDate.slice(0, 4);
+  const historyCount = history.isLoading ? "—" : String(history.data?.length ?? 0);
+
+  return (
+    <div className="space-y-4 pb-14">
+      {/* ------------------------------------------------------- breadcrumb row */}
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-2 text-[13.5px] text-[#5F7186]">
+          <Link
+            href={studentsHref}
+            aria-label="Students home"
+            className="grid h-[22px] w-[22px] place-items-center rounded-[7px] bg-[#EAF1FB] text-[#4C6E9E] transition-colors hover:bg-[#DEEAFB] hover:text-[#2570D3]"
+          >
+            <Layers className="h-3 w-3" />
+          </Link>
+          <span className="text-[#C6D2E0]">›</span>
+          <Link
+            href={studentsHref}
+            className="font-medium text-[#54677E] transition-colors hover:text-[#2570D3]"
+          >
+            Students
+          </Link>
+          <span className="text-[#C6D2E0]">›</span>
+          <span className="font-semibold tracking-[-0.005em] text-[#2570D3]">Student Profile</span>
+        </div>
+
+        <button
+          type="button"
+          onClick={onBack}
+          className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[#DCE6F3] bg-white px-3.5 py-[7px] text-[13px] font-semibold tracking-[-0.004em] text-[#3B4C61] shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-[#B7D0EF] hover:text-[#2570D3]"
+        >
+          <ArrowLeft className="h-3.5 w-3.5" />
+          Back to Students
+        </button>
       </div>
 
-      {/* Concept Header Card (Matching Page 4 in Roadmap PDF) */}
-      <div className="rounded-2xl border border-[#DDE5F0] bg-white p-6 shadow-2xs">
-        <div className="flex flex-col md:flex-row items-start gap-6">
-          {/* Avatar / Portrait */}
-          <div className="flex h-28 w-28 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-slate-100 to-slate-200 border-2 border-slate-200 shadow-xs text-slate-700 text-3xl font-bold">
-            {student.avatarUrl ? (
-              <img
-                src={student.avatarUrl}
-                alt={student.fullName}
-                className="h-full w-full object-cover rounded-2xl"
-              />
-            ) : (
-              student.fullName.slice(0, 2).toUpperCase()
-            )}
-          </div>
+      {/* ------------------------------------------------------- hero + counters */}
+      <div className="grid gap-4 lg:grid-cols-12">
+        <section className="relative flex flex-col justify-center overflow-hidden rounded-2xl border border-[#E4ECF7] bg-[linear-gradient(103deg,#EFF5FE_0%,#F7FAFF_46%,#E9F1FE_78%,#F3EEFC_100%)] px-5 py-[18px] shadow-2xs lg:col-span-6">
+          <div className="flex items-center gap-4">
+            <div className="grid h-[72px] w-[72px] shrink-0 place-items-center rounded-2xl border border-[#DCE7F7] bg-[linear-gradient(155deg,#FFFFFF,#E7F0FD)] text-[22px] font-bold tracking-[0.03em] text-[#2A64B8] shadow-[inset_0_1px_0_#fff]">
+              {initials}
+            </div>
 
-          {/* Key Attributes in 2-Column Grid */}
-          <div className="flex-1 min-w-0">
-            <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-slate-100">
-              <div>
-                <h2 className="text-xl font-bold text-slate-900">
-                  {student.fullName}
-                </h2>
-                <p className="text-xs text-slate-500">
-                  Admission ID: <span className="font-mono font-medium">{student.admissionNo}</span>
-                </p>
-              </div>
-
-              {/* Status Selector */}
-              <div className="flex items-center gap-2">
+            <div className="min-w-0 flex-1">
+              <h1 className="truncate text-[24px] font-bold leading-[1.18] tracking-[-0.028em] text-[#0D2038]">
+                {person.displayName}
+              </h1>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
                 <span
                   className={cn(
-                    "rounded-full border px-2.5 py-0.5 text-xs font-semibold",
-                    getStatusBadge(currentStatus)
+                    "inline-flex items-center gap-1.5 rounded-full border px-2.5 py-[3.5px] text-[12px] font-semibold tracking-[0.005em]",
+                    statusClasses
                   )}
                 >
-                  {currentStatus}
+                  <span className="h-1.5 w-1.5 rounded-full bg-current" />
+                  <span className="capitalize">{statusLabel}</span>
                 </span>
-                <select
-                  value={currentStatus}
-                  onChange={(e) => handleStatusChange(e.target.value as StudentStatus)}
-                  className="rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs text-slate-700 outline-hidden hover:bg-slate-50 cursor-pointer"
+                <span
+                  className="rounded-full border border-[#DDE7F4] bg-white/85 px-2.5 py-[3.5px] font-mono text-[11.5px] tracking-[0.01em] text-[#4A6382]"
+                  title="Admission number"
                 >
-                  <option value="Active">Active</option>
-                  <option value="On leave">On leave</option>
-                  <option value="Suspended">Suspended</option>
-                  <option value="Alumni">Alumni</option>
-                </select>
+                  {student.admissionNo}
+                </span>
+                {student.hasSpecialNeeds && (
+                  <span className="rounded-full border border-amber-200 bg-amber-50 px-2.5 py-[3.5px] text-[12px] font-semibold text-amber-700">
+                    special needs
+                  </span>
+                )}
               </div>
             </div>
 
-            {/* 2-Column Metadata Grid (Matching concept layout) */}
-            <div className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-8 gap-y-2 text-xs">
-              <div className="flex items-baseline">
-                <span className="w-32 text-slate-400 font-medium">Roll No :</span>
-                <span className="font-semibold text-slate-800">{student.rollNo}</span>
+            <HeroIllustration />
+          </div>
+
+          <div className="mt-4 grid grid-cols-2 gap-x-[18px] gap-y-2.5 border-t border-[#DCE8F7] pt-3.5 sm:grid-cols-3">
+            <div className="flex items-center gap-2 sm:pr-1">
+              <CalendarDays className="h-[15px] w-[15px] shrink-0 text-[#5A83BC]" />
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium leading-[1.35] tracking-[0.012em] text-[#7E90A6]">
+                  Enrolled On
+                </p>
+                <p className="truncate text-[13.5px] font-semibold leading-[1.4] tracking-[-0.006em] text-[#16293F] tabular-nums">
+                  {student.admissionDate}
+                </p>
               </div>
-              <div className="flex items-baseline">
-                <span className="w-32 text-slate-400 font-medium">Campus :</span>
-                <span className="font-semibold text-slate-800">{student.campusName}</span>
+            </div>
+
+            <div className="flex items-center gap-2 sm:border-l sm:border-[#DCE8F7] sm:pl-[18px]">
+              <Hash className="h-[15px] w-[15px] shrink-0 text-[#5A83BC]" />
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium leading-[1.35] tracking-[0.012em] text-[#7E90A6]">
+                  Admission
+                </p>
+                <p className="truncate text-[13.5px] font-semibold capitalize leading-[1.4] tracking-[-0.006em] text-[#16293F]">
+                  {pretty(student.admissionType)}
+                </p>
               </div>
-              <div className="flex items-baseline">
-                <span className="w-32 text-slate-400 font-medium">Class :</span>
-                <span className="font-semibold text-slate-800">
-                  {student.grade} - Section {student.section}
-                </span>
-              </div>
-              <div className="flex items-baseline">
-                <span className="w-32 text-slate-400 font-medium">Joined date :</span>
-                <span className="font-semibold text-slate-800">{student.joinedDate}</span>
-              </div>
-              <div className="flex items-baseline">
-                <span className="w-32 text-slate-400 font-medium">DOB (BS / AD) :</span>
-                <span className="font-semibold text-slate-800">
-                  {student.dobBS} ({student.dobAD})
-                </span>
-              </div>
-              <div className="flex items-baseline">
-                <span className="w-32 text-slate-400 font-medium">Father's Name :</span>
-                <span className="font-semibold text-slate-800">
-                  {primaryGuardian?.name ?? "N/A"}
-                </span>
+            </div>
+
+            <div className="flex items-center gap-2 sm:border-l sm:border-[#DCE8F7] sm:pl-[18px]">
+              <Users className="h-[15px] w-[15px] shrink-0 text-[#5A83BC]" />
+              <div className="min-w-0">
+                <p className="text-[11px] font-medium leading-[1.35] tracking-[0.012em] text-[#7E90A6]">
+                  Campus
+                </p>
+                <p
+                  className={cn(
+                    "truncate text-[13.5px] font-semibold leading-[1.4] tracking-[-0.006em]",
+                    student.campus ? "text-[#16293F]" : "font-medium text-[#A2B1C2]"
+                  )}
+                >
+                  {student.campus?.name ?? "Not assigned"}
+                </p>
               </div>
             </div>
           </div>
+        </section>
+
+        <div className="lg:col-span-2">
+          <MiniStat
+            icon={Users}
+            label="Guardians"
+            value={String(student.guardians.length)}
+            badge={student.guardians.length ? "linked" : "none"}
+            caption="on this record"
+            tone="blue"
+            muted={student.guardians.length === 0}
+          />
+        </div>
+        <div className="lg:col-span-2">
+          <MiniStat
+            icon={Phone}
+            label="Contacts"
+            value={String(person.contacts.length)}
+            badge={person.contacts.length ? "on file" : "none"}
+            caption="phone and email"
+            tone="violet"
+            muted={person.contacts.length === 0}
+          />
+        </div>
+        <div className="lg:col-span-2">
+          <MiniStat
+            icon={History}
+            label="Status changes"
+            value={historyCount}
+            badge="recorded"
+            caption="in the audit log"
+            tone="green"
+            muted={historyCount === "0"}
+          />
         </div>
       </div>
 
-      {/* Pill Navigation Tabs (Matching Page 4 Concept) */}
-      <div className="flex items-center gap-2 overflow-x-auto pb-1 text-xs font-medium">
-        <button
-          type="button"
-          onClick={() => setActiveTab("personal")}
-          className={cn(
-            "rounded-xl px-4 py-2 transition-colors cursor-pointer whitespace-nowrap",
-            activeTab === "personal"
-              ? "bg-[#2570D3] text-white shadow-xs font-semibold"
-              : "bg-white border border-[#DDE5F0] text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          )}
-        >
-          Personal Info
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("academic")}
-          className={cn(
-            "rounded-xl px-4 py-2 transition-colors cursor-pointer whitespace-nowrap",
-            activeTab === "academic"
-              ? "bg-[#2570D3] text-white shadow-xs font-semibold"
-              : "bg-white border border-[#DDE5F0] text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          )}
-        >
-          Academic
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("documents")}
-          className={cn(
-            "rounded-xl px-4 py-2 transition-colors cursor-pointer whitespace-nowrap",
-            activeTab === "documents"
-              ? "bg-[#2570D3] text-white shadow-xs font-semibold"
-              : "bg-white border border-[#DDE5F0] text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          )}
-        >
-          Documents
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("health")}
-          className={cn(
-            "rounded-xl px-4 py-2 transition-colors cursor-pointer whitespace-nowrap",
-            activeTab === "health"
-              ? "bg-[#2570D3] text-white shadow-xs font-semibold"
-              : "bg-white border border-[#DDE5F0] text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          )}
-        >
-          Health
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("fees")}
-          className={cn(
-            "rounded-xl px-4 py-2 transition-colors cursor-pointer whitespace-nowrap",
-            activeTab === "fees"
-              ? "bg-[#2570D3] text-white shadow-xs font-semibold"
-              : "bg-white border border-[#DDE5F0] text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          )}
-        >
-          Fees & Dues
-        </button>
-
-        <button
-          type="button"
-          onClick={() => setActiveTab("attendance")}
-          className={cn(
-            "rounded-xl px-4 py-2 transition-colors cursor-pointer whitespace-nowrap",
-            activeTab === "attendance"
-              ? "bg-[#2570D3] text-white shadow-xs font-semibold"
-              : "bg-white border border-[#DDE5F0] text-slate-600 hover:bg-slate-50 hover:text-slate-900"
-          )}
-        >
-          Attendance
-        </button>
+      {/* ----------------------------------------------------------------- tabs */}
+      <div className="flex gap-1 overflow-x-auto rounded-xl border border-[#E7EDF6] bg-white p-[5px] shadow-2xs">
+        {TABS.map((tab) => {
+          const active = activeTab === tab.id;
+          return (
+            <button
+              key={tab.id}
+              type="button"
+              onClick={() => setActiveTab(tab.id)}
+              aria-pressed={active}
+              className={cn(
+                "inline-flex shrink-0 cursor-pointer items-center gap-1.5 rounded-lg px-2.5 py-2 text-[12.5px] font-semibold tracking-[-0.006em] transition-all duration-200",
+                active
+                  ? "bg-[linear-gradient(180deg,#2F7BE0,#2570D3)] text-white shadow-xs"
+                  : "text-[#5A6B80] hover:bg-[#F1F6FD] hover:text-[#2570D3]"
+              )}
+            >
+              <tab.icon className={cn("h-3.5 w-3.5", active ? "text-white" : "text-[#8FA0B6]")} />
+              {tab.label}
+            </button>
+          );
+        })}
       </div>
 
-      {/* Tab 1: PERSONAL INFO (Side-by-side cards matching the concept picture) */}
-      {activeTab === "personal" && (
-        <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-          {/* Left Card: Personal Info */}
-          <div className="lg:col-span-7 rounded-2xl border border-[#DDE5F0] bg-white p-6 shadow-2xs space-y-4">
-            <h3 className="font-bold text-sm text-slate-900 pb-3 border-b border-slate-100">
-              Personal Info
-            </h3>
-
-            <div className="space-y-3 text-xs">
-              <div className="flex items-baseline">
-                <span className="w-36 text-slate-400 font-medium">Gender :</span>
-                <span className="font-semibold text-slate-800">{student.gender}</span>
-              </div>
-              <div className="flex items-baseline">
-                <span className="w-36 text-slate-400 font-medium">Address :</span>
-                <span className="font-semibold text-slate-800">
-                  {student.address.street}, {student.address.ward}, {student.address.municipality}, {student.address.district}
-                </span>
-              </div>
-              <div className="flex items-baseline">
-                <span className="w-36 text-slate-400 font-medium">Blood Group :</span>
-                <span className="font-semibold text-slate-800">{student.bloodGroup}</span>
-              </div>
-              <div className="flex items-baseline">
-                <span className="w-36 text-slate-400 font-medium">Category :</span>
-                <span className="font-semibold text-slate-800">General</span>
-              </div>
-              <div className="flex items-baseline">
-                <span className="w-36 text-slate-400 font-medium">Emergency contact :</span>
-                <span className="font-semibold text-slate-800 font-mono">
-                  {primaryGuardian?.phone ?? "N/A"} ({primaryGuardian?.relation})
-                </span>
-              </div>
-              {student.transportRoute && (
-                <div className="flex items-baseline">
-                  <span className="w-36 text-slate-400 font-medium">Transit route :</span>
-                  <span className="font-semibold text-slate-800">
-                    {student.transportRoute} (Stop: {student.busStop})
+      {/* ------------------------------------------------------------- OVERVIEW */}
+      {activeTab === "overview" && (
+        <>
+          <div className="grid items-start gap-4 lg:grid-cols-[minmax(0,1.42fr)_minmax(0,1fr)]">
+            {/* Personal information */}
+            <section className="rounded-2xl border border-[#E7EDF6] bg-white p-[18px] shadow-2xs">
+              <div className="flex items-center justify-between gap-3 border-b border-[#F0F4FA] pb-3">
+                <h2 className="flex items-center gap-2.5 text-[15px] font-bold tracking-[-0.014em] text-[#0F243E]">
+                  <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-lg bg-[#EFF6FF] text-[#3B82F6]">
+                    <UserRound className="h-3.5 w-3.5" />
                   </span>
+                  Personal Information
+                </h2>
+                <button
+                  type="button"
+                  disabled
+                  title="Editing arrives with the student edit form"
+                  className="inline-flex items-center gap-1.5 rounded-full border border-[#EDF2F8] px-3 py-1.5 text-[12.5px] font-semibold text-[#C3CDDA]"
+                >
+                  <Pencil className="h-3.5 w-3.5" />
+                  Edit
+                </button>
+              </div>
+
+              <div className="mt-3 grid items-start gap-[18px] sm:grid-cols-[minmax(0,1fr)_minmax(0,0.86fr)]">
+                <div>
+                  <Field label="Gender" value={person.gender} />
+                  <Field label="Date of Birth" value={person.dob} />
+                  <Field label="Blood Group" value={person.bloodGroup} />
+                  <Field label="Birth Place" value={person.birthPlace} />
+                  <Field label="Mother Tongue" value={person.motherTongue} />
+                  <Field label="Nationality" value={person.nationality} />
+                  {canReadSensitive && (
+                    <>
+                      <Field label="Religion" value={person.religion} />
+                      <Field label="National ID" value={person.nationalId} />
+                    </>
+                  )}
+                </div>
+
+                <div>
+                  <Field label="Phone Number" value={primaryContact?.value ?? null} />
+                  <Field label="Email Address" value={emailContact?.value ?? null} />
+                  <Field label="Address" value={addressLine} />
+                  <Field label="Parent's Contact" value={primaryGuardian?.primaryPhone ?? null} />
+                  {!canReadSensitive && (
+                    <p className="pt-1.5 text-[12px] leading-relaxed text-[#93A3B6]">
+                      National ID, religion and ethnicity need person.sensitive.read.
+                    </p>
+                  )}
+
+                  <div className="mt-3.5 rounded-xl border border-[#E7EEF7] bg-[linear-gradient(180deg,#FBFDFF,#F5F9FF)] px-3.5 py-3">
+                    <p className="mb-1 text-[13.5px] font-bold tracking-[-0.008em] text-[#17293F]">
+                      Quick Info
+                    </p>
+                    {(
+                      [
+                        ["Admission Year", admissionYear],
+                        ["Admission Type", pretty(student.admissionType)],
+                        ["EMIS ID", student.emisId ?? "Not issued"],
+                        ["Campus", student.campus?.name ?? "Not assigned"],
+                        ["Status", statusLabel],
+                      ] as [string, string][]
+                    ).map(([k, v]) => (
+                      <div
+                        key={k}
+                        className="flex items-center justify-between gap-2.5 border-b border-[#EAF0F8] py-[7px] text-[13px] last:border-0 last:pb-px"
+                      >
+                        <span className="text-[#7C8DA3]">{k}</span>
+                        <span className="inline-flex items-center gap-1.5 font-semibold capitalize tracking-[-0.005em] text-[#1B3049]">
+                          {k === "Status" && (
+                            <span className="h-1.5 w-1.5 rounded-full bg-[#12B76A]" />
+                          )}
+                          {v}
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              </div>
+            </section>
+
+            {/* Guardians */}
+            <section className="rounded-2xl border border-[#E7EDF6] bg-white p-[18px] shadow-2xs">
+              <div className="flex items-center justify-between gap-3 border-b border-[#F0F4FA] pb-3">
+                <h2 className="flex items-center gap-2.5 text-[15px] font-bold tracking-[-0.014em] text-[#0F243E]">
+                  <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-lg bg-[#EFF6FF] text-[#3B82F6]">
+                    <Users className="h-3.5 w-3.5" />
+                  </span>
+                  Guardians
+                </h2>
+                <button
+                  type="button"
+                  onClick={() => setAddGuardianOpen(true)}
+                  disabled={!canUpdateStudent || !canCreateGuardian}
+                  title={
+                    canUpdateStudent && canCreateGuardian
+                      ? "Link a parent or guardian to this student"
+                      : "Needs student.update and guardian.create"
+                  }
+                  className="inline-flex cursor-pointer items-center gap-1.5 rounded-full border border-[#E1E9F4] bg-white px-3 py-1.5 text-[12.5px] font-semibold text-[#3F5266] transition-all duration-200 hover:-translate-y-0.5 hover:border-[#B7D0EF] hover:text-[#2570D3] disabled:cursor-not-allowed disabled:border-[#EDF2F8] disabled:text-[#C3CDDA] disabled:hover:translate-y-0"
+                >
+                  <Plus className="h-3 w-3" />
+                  Add guardian
+                </button>
+              </div>
+
+              {student.guardians.length === 0 ? (
+                <div className="mt-3 rounded-xl border border-dashed border-[#E1E9F4] px-4 py-6 text-center">
+                  <Users className="mx-auto h-6 w-6 text-[#C7D3E1]" />
+                  <p className="mt-2 text-[13.5px] text-[#5F7186]">No guardians linked yet.</p>
+                  <p className="mt-1 text-[12.5px] leading-relaxed text-[#93A3B6]">
+                    Add the father, mother or legal guardian from here — one submit creates the
+                    guardian and links them to this student.
+                  </p>
+                  <button
+                    type="button"
+                    onClick={() => setAddGuardianOpen(true)}
+                    disabled={!canUpdateStudent || !canCreateGuardian}
+                    className="mt-3 inline-flex cursor-pointer items-center gap-1.5 rounded-full bg-[#2570D3] px-3.5 py-1.5 text-[12.5px] font-semibold text-white transition-colors hover:bg-[#1C5BB0] disabled:cursor-not-allowed disabled:bg-slate-200 disabled:text-slate-400"
+                  >
+                    <Plus className="h-3.5 w-3.5" />
+                    Add guardian
+                  </button>
+                </div>
+              ) : (
+                <ul>
+                  {student.guardians.map((g, index) => (
+                    <li
+                      key={g.guardianId}
+                      className="mt-2.5 flex items-stretch gap-3 rounded-xl border border-[#EDF2FA] px-3 py-3 transition-colors first:mt-3 hover:border-[#DCE8F6] hover:bg-[#F9FCFF]"
+                    >
+                      <div className="flex min-w-0 flex-1 items-center gap-2.5">
+                        <div
+                          className={cn(
+                            "grid h-10 w-10 shrink-0 place-items-center rounded-full",
+                            index % 2 === 0
+                              ? "bg-[#E9F1FD] text-[#3B82F6]"
+                              : "bg-[#F3EEFE] text-[#8B5CF6]"
+                          )}
+                        >
+                          <UserRound className="h-[18px] w-[18px]" />
+                        </div>
+                        <div className="min-w-0">
+                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+                            <p className="truncate text-[14px] font-semibold tracking-[-0.008em] text-[#16293F]">
+                              {g.displayName}
+                            </p>
+                            <span className="rounded-md bg-[#EFF6FF] px-2 py-[2px] text-[11px] font-semibold capitalize tracking-[0.004em] text-[#2E74D6]">
+                              {pretty(g.relation)}
+                            </span>
+                          </div>
+                          <p className="mt-[5px] flex items-center gap-1.5 text-[12.5px] text-[#75879D]">
+                            <Phone className="h-3 w-3" />
+                            {g.primaryPhone ?? "No phone on file"}
+                          </p>
+                        </div>
+                      </div>
+
+                      <div className="hidden w-[158px] shrink-0 flex-col justify-center gap-2.5 border-l border-[#EEF3FA] pl-3 sm:flex">
+                        <div className="flex items-start gap-1.5 text-[12px] text-[#4A5C72]">
+                          <CheckCircle2 className="mt-px h-3.5 w-3.5 text-[#93A2B5]" />
+                          <div className="min-w-0">
+                            <span className="block text-[10.5px] font-medium leading-[1.3] tracking-[0.006em] text-[#96A5B8]">
+                              Primary guardian
+                            </span>
+                            <span className="block truncate text-[11.5px] font-semibold leading-[1.3] tracking-[-0.004em] text-[#1B3049]">
+                              {g.isPrimary ? "Yes" : "No"}
+                            </span>
+                          </div>
+                        </div>
+                        <div className="flex items-start justify-between gap-1.5 text-[12px] text-[#4A5C72]">
+                          <div className="flex min-w-0 items-start gap-1.5">
+                            <Phone className="mt-px h-3.5 w-3.5 text-[#93A2B5]" />
+                            <div className="min-w-0">
+                              <span className="block text-[10.5px] font-medium leading-[1.3] tracking-[0.006em] text-[#96A5B8]">
+                                Contact
+                              </span>
+                              <span className="block truncate text-[11.5px] font-semibold leading-[1.3] tracking-[-0.004em] text-[#1B3049] tabular-nums">
+                                {g.primaryPhone ?? "—"}
+                              </span>
+                            </div>
+                          </div>
+                          <button
+                            type="button"
+                            onClick={() => unlink.mutate(g.guardianId)}
+                            disabled={!canUpdateStudent || unlink.isPending}
+                            title={
+                              canUpdateStudent
+                                ? `Unlink ${g.displayName} from this student`
+                                : "Needs student.update"
+                            }
+                            aria-label={`Unlink ${g.displayName}`}
+                            className="cursor-pointer rounded-md p-1 text-slate-300 transition-colors hover:bg-rose-50 hover:text-rose-600 disabled:cursor-not-allowed disabled:hover:bg-transparent disabled:hover:text-slate-300"
+                          >
+                            <X className="h-3.5 w-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+              )}
+
+              {student.guardians.length > 0 && (
+                <div className="mt-3 flex flex-wrap gap-1.5">
+                  {student.guardians.some((g) => g.isEmergencyContact) && (
+                    <span className="rounded-full bg-rose-50 px-2 py-[3px] text-[11px] font-semibold text-rose-700">
+                      emergency contact set
+                    </span>
+                  )}
+                  {student.guardians.some((g) => g.canPickup) && (
+                    <span className="rounded-full bg-[#F1F5F9] px-2 py-[3px] text-[11px] text-[#4A5C72]">
+                      pickup allowed
+                    </span>
+                  )}
+                  {student.guardians.some((g) => g.canPayFees) && (
+                    <span className="rounded-full bg-[#F1F5F9] px-2 py-[3px] text-[11px] text-[#4A5C72]">
+                      pays fees
+                    </span>
+                  )}
+                  {student.guardians.some((g) => g.hasCustody) && (
+                    <span className="rounded-full bg-[#F1F5F9] px-2 py-[3px] text-[11px] text-[#4A5C72]">
+                      custody
+                    </span>
+                  )}
                 </div>
               )}
-            </div>
-
-            {/* Guardian contacts section */}
-            <div className="pt-4 border-t border-slate-100">
-              <h4 className="font-semibold text-xs text-slate-700 mb-2">
-                Family & Guardian details
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {student.guardians.map((g, i) => (
-                  <div
-                    key={i}
-                    className="rounded-xl border border-slate-200 p-3 bg-slate-50/50 text-xs"
-                  >
-                    <div className="flex items-center justify-between">
-                      <p className="font-bold text-slate-800">{g.name}</p>
-                      <span className="rounded bg-slate-200 px-1.5 py-0.2 text-[10px] text-slate-600 font-medium">
-                        {g.relation}
-                      </span>
-                    </div>
-                    {g.occupation && (
-                      <p className="text-[11px] text-slate-500 mt-0.5">
-                        {g.occupation}
-                      </p>
-                    )}
-                    <p className="text-[11px] text-slate-700 font-mono mt-1 flex items-center gap-1">
-                      <Phone className="h-3 w-3 text-[#2570D3]" />
-                      {g.phone}
-                    </p>
-                  </div>
-                ))}
-              </div>
-            </div>
+            </section>
           </div>
 
-          {/* Right Card: Documents (Matching the blue icons & green verified indicators from pic) */}
-          <div className="lg:col-span-5 rounded-2xl border border-[#DDE5F0] bg-white p-6 shadow-2xs space-y-4">
-            <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-              <h3 className="font-bold text-sm text-slate-900">
-                Documents
-              </h3>
-              <span className="text-xs text-slate-400">
-                {student.documents.length} files
-              </span>
+          {/* Admission record strip */}
+          <section className="rounded-2xl border border-[#E7EDF6] bg-white p-[18px] shadow-2xs">
+            <div className="flex items-center justify-between gap-3 border-b border-[#F0F4FA] pb-3">
+              <h2 className="flex items-center gap-2.5 text-[15px] font-bold tracking-[-0.014em] text-[#0F243E]">
+                <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-lg bg-[#EFF6FF] text-[#3B82F6]">
+                  <Landmark className="h-3.5 w-3.5" />
+                </span>
+                Admission Record
+              </h2>
             </div>
 
-            <div className="space-y-3">
-              {/* Default realistic documents if list is short */}
+            <div className="mt-3.5 grid items-center gap-4 md:grid-cols-2 xl:grid-cols-[repeat(3,minmax(0,1fr))_minmax(0,1.05fr)] xl:gap-0">
               {[
-                { title: "Birth Certificate", file: "birth_certificate_official.pdf", size: "1.2 MB", verified: true },
-                { title: "Citizenship / National ID", file: "national_id_slip.pdf", size: "820 KB", verified: true },
-                { title: "Previous Report Card / TC", file: "previous_gradesheet_tc.pdf", size: "1.5 MB", verified: true },
-                ...student.documents.filter(d => !["Birth Certificate", "National ID"].includes(d.title)),
-              ].map((doc, idx) => (
+                { icon: CalendarDays, label: "Admission Date", value: student.admissionDate },
+                { icon: Clock, label: "Record Created", value: dateTime(student.createdAt) ?? "—" },
+                { icon: RefreshCw, label: "Record Updated", value: dateTime(student.updatedAt) ?? "—" },
+              ].map((cell) => (
                 <div
-                  key={idx}
-                  className="flex items-center justify-between rounded-xl border border-slate-100 p-3 hover:bg-slate-50/80 transition-colors text-xs"
+                  key={cell.label}
+                  className="flex min-w-0 items-center gap-3 xl:border-r xl:border-[#EEF3FA] xl:pr-4 xl:[&:not(:first-child)]:pl-4"
                 >
-                  <div className="flex items-center gap-3">
-                    {/* Blue Icon Square matching pic */}
-                    <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-lg bg-[#2570D3] text-white font-bold shadow-2xs">
-                      <FileText className="h-5 w-5" />
-                    </div>
-                    <div>
-                      <p className="font-semibold text-slate-800">{doc.title}</p>
-                      <p className="text-[11px] text-slate-400">
-                        {"fileName" in doc ? doc.fileName : doc.file} • {"fileSize" in doc ? doc.fileSize : doc.size}
-                      </p>
-                    </div>
-                  </div>
-
-                  {/* Green Verified Circle Indicator matching pic */}
-                  <div className="flex items-center gap-2">
-                    <span
-                      className="flex h-5 w-5 items-center justify-center rounded-full bg-emerald-100 text-emerald-700"
-                      title="Verified Document"
-                    >
-                      <CheckCircle2 className="h-4 w-4" />
-                    </span>
+                  <span className="grid h-7 w-7 shrink-0 place-items-center rounded-lg bg-[#EFF6FF] text-[#3B82F6]">
+                    <cell.icon className="h-3.5 w-3.5" />
+                  </span>
+                  <div className="min-w-0">
+                    <p className="text-[11px] font-medium leading-[1.3] tracking-[0.008em] text-[#8595A9]">
+                      {cell.label}
+                    </p>
+                    <p className="truncate text-[13px] font-semibold leading-[1.35] tracking-[-0.004em] text-[#1B3049] tabular-nums">
+                      {cell.value}
+                    </p>
                   </div>
                 </div>
               ))}
+
+              <div className="ml-1 flex items-center justify-center gap-2.5 rounded-xl border border-[#B7EFD2] bg-[#EAFBF2] px-3.5 py-[13px]">
+                <CheckCircle2 className="h-5 w-5 shrink-0 text-[#0E9F6E]" />
+                <div>
+                  <p className="text-[11px] font-medium leading-[1.3] tracking-[0.008em] text-[#0B8E63]">
+                    Admission Status
+                  </p>
+                  <p className="text-[14px] font-bold capitalize tracking-[-0.01em] text-[#066B45]">
+                    {statusLabel}
+                  </p>
+                </div>
+              </div>
             </div>
 
-            <div className="pt-2 text-center">
-              <button
-                type="button"
-                onClick={() => toast.success("Upload document dialog")}
-                className="text-xs font-semibold text-[#2570D3] hover:underline"
-              >
-                + Upload new certificate
-              </button>
-            </div>
-          </div>
-        </div>
+            {(student.previousSchoolName ||
+              student.previousTcNo ||
+              student.emisId ||
+              student.remarks) && (
+              <div className="mt-3.5 grid gap-x-8 border-t border-[#F1F5F9] pt-3.5 sm:grid-cols-2">
+                <Field label="Previous school" value={student.previousSchoolName} />
+                <Field label="Previous class" value={student.previousSchoolClass} />
+                <Field label="Transfer certificate" value={student.previousTcNo} />
+                <Field label="EMIS ID" value={student.emisId} />
+                <div className="sm:col-span-2">
+                  <Field label="Remarks" value={student.remarks} />
+                </div>
+              </div>
+            )}
+          </section>
+        </>
       )}
 
-      {/* Tab 2: ACADEMIC */}
+      {/* ------------------------------------------------------------- ACADEMIC */}
       {activeTab === "academic" && (
-        <div className="rounded-2xl border border-[#DDE5F0] bg-white p-6 shadow-2xs space-y-6">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="font-bold text-sm text-slate-900">
-                Academic Progress & Terminal Examinations
-              </h3>
-              <p className="text-xs text-slate-500">
-                Grade {student.grade} • Academic Year 2026/2027 (2083 BS)
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => toast.success("Marksheet PDF generated")}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 px-3 py-1.5 text-xs font-medium text-slate-700 hover:bg-slate-50"
-            >
-              <Download className="h-3.5 w-3.5" />
-              <span>Download marksheet</span>
-            </button>
-          </div>
-
-          {student.results.length === 0 ? (
-            <div className="py-12 text-center text-xs text-slate-400">
-              No terminal results finalized yet for this term.
-            </div>
-          ) : (
-            student.results.map((r, i) => (
-              <div key={i} className="space-y-4">
-                <div className="flex flex-wrap items-center justify-between gap-2 bg-slate-50 p-4 rounded-xl border border-slate-200">
-                  <div>
-                    <h4 className="font-bold text-slate-900 text-sm">{r.term}</h4>
-                    <p className="text-xs text-slate-500">
-                      Rank: <strong className="text-slate-800">{r.rank}</strong> • Attendance during exams: {r.attendancePct}%
-                    </p>
-                  </div>
-                  <div className="text-right">
-                    <span className="text-2xl font-extrabold text-[#2570D3]">
-                      GPA {r.gpa.toFixed(2)}
-                    </span>
-                    <p className="text-xs text-slate-500 font-medium">
-                      Aggregate: {r.percentage}% (Distinction)
-                    </p>
-                  </div>
-                </div>
-
-                <div className="overflow-x-auto rounded-xl border border-slate-200">
-                  <table className="w-full text-left text-xs border-collapse">
-                    <thead>
-                      <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-medium">
-                        <th className="py-2.5 px-3">Subject</th>
-                        <th className="py-2.5 px-3">Full Marks</th>
-                        <th className="py-2.5 px-3">Pass Marks</th>
-                        <th className="py-2.5 px-3">Obtained Marks</th>
-                        <th className="py-2.5 px-3 text-right">Grade Point</th>
-                      </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100 text-slate-700">
-                      {r.subjects.map((s, idx) => (
-                        <tr key={idx} className="hover:bg-slate-50/60">
-                          <td className="py-2.5 px-3 font-medium text-slate-900">
-                            {s.name}
-                          </td>
-                          <td className="py-2.5 px-3">{s.fullMarks}</td>
-                          <td className="py-2.5 px-3">{s.passMarks}</td>
-                          <td className="py-2.5 px-3 font-semibold text-slate-900">
-                            {s.obtainedMarks}
-                          </td>
-                          <td className="py-2.5 px-3 text-right">
-                            <span className="font-bold text-[#2570D3] bg-[#2570D3]/10 px-2 py-0.5 rounded">
-                              {s.grade}
-                            </span>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                <div className="bg-slate-50/80 p-3 rounded-xl border border-slate-200 text-xs text-slate-700">
-                  <span className="font-semibold">Class Teacher Remarks: </span>
-                  <span className="italic">"{r.remarks}"</span>
-                </div>
-              </div>
-            ))
-          )}
-        </div>
+        <PendingModule
+          icon={Trophy}
+          title="Academic performance arrives with the academics module"
+          detail="Grades, sections, roll numbers and results have no backend yet, so nothing is shown here rather than something invented."
+          action={
+            <DisabledAction
+              icon={FileText}
+              label="Marksheet PDF"
+              title="Waiting on the academics module"
+            />
+          }
+        />
       )}
 
-      {/* Tab 3: DOCUMENTS EXPANDED */}
+      {/* ------------------------------------------------------------ DOCUMENTS */}
       {activeTab === "documents" && (
-        <div className="rounded-2xl border border-[#DDE5F0] bg-white p-6 shadow-2xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="font-bold text-sm text-slate-900">
-                Institutional Document Repository
-              </h3>
-              <p className="text-xs text-slate-500">
-                Verified compliance documents, identification slips, and certificates
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => toast.success("Upload prompt opened")}
-              className="rounded-lg bg-[#2570D3] px-3.5 py-1.5 text-xs font-medium text-white hover:bg-[#1C5BB0]"
-            >
-              + Upload document
-            </button>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {[
-              { title: "Birth Certificate", file: "birth_certificate_official.pdf", size: "1.2 MB", verified: true, date: "2020-04-15" },
-              { title: "Citizenship / National ID", file: "national_id_slip.pdf", size: "820 KB", verified: true, date: "2024-06-20" },
-              { title: "Previous Report Card / TC", file: "previous_gradesheet_tc.pdf", size: "1.5 MB", verified: true, date: "2020-04-15" },
-              { title: "Medical Fitness Record", file: "annual_health_clearance.pdf", size: "450 KB", verified: true, date: "2026-01-10" },
-            ].map((d, i) => (
-              <div
-                key={i}
-                className="flex items-center justify-between rounded-xl border border-slate-200 p-4 hover:border-slate-300 transition-colors"
-              >
-                <div className="flex items-center gap-3.5">
-                  <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-[#2570D3] text-white shadow-2xs">
-                    <FileText className="h-5 w-5" />
-                  </div>
-                  <div>
-                    <div className="flex items-center gap-2">
-                      <p className="font-bold text-xs text-slate-900">{d.title}</p>
-                      <span className="rounded bg-emerald-50 px-1.5 py-0.2 text-[10px] font-semibold text-emerald-700">
-                        Verified
-                      </span>
-                    </div>
-                    <p className="text-[11px] text-slate-400 mt-0.5">
-                      {d.file} • {d.size} • {d.date}
-                    </p>
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => toast.info(`Downloading ${d.file}`)}
-                  className="rounded-lg p-2 text-slate-500 hover:bg-slate-100 hover:text-slate-900"
-                  title="Download file"
-                >
-                  <Download className="h-4 w-4" />
-                </button>
-              </div>
-            ))}
-          </div>
-        </div>
+        <PendingModule
+          icon={FileText}
+          title="Documents arrive with the files module"
+          detail="Uploads and verification need a storage backend. The contract only reserves person.photoFileId for now."
+          action={
+            <DisabledAction
+              icon={FileText}
+              label="Upload document"
+              title="Waiting on the files module"
+            />
+          }
+        />
       )}
 
-      {/* Tab 4: HEALTH */}
+      {/* --------------------------------------------------------------- HEALTH */}
       {activeTab === "health" && (
-        <div className="rounded-2xl border border-[#DDE5F0] bg-white p-6 shadow-2xs space-y-4">
-          <div className="pb-3 border-b border-slate-100">
-            <h3 className="font-bold text-sm text-slate-900">
-              Student Health & Medical Profile
-            </h3>
-            <p className="text-xs text-slate-500">
-              Emergency medical directives, allergies, and health clearance status
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 text-xs">
-            <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-              <span className="text-slate-400 font-medium">Blood Group</span>
-              <p className="text-xl font-bold text-slate-900 mt-1">
-                {student.bloodGroup}
-              </p>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Universal donor compatible
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-              <span className="text-slate-400 font-medium">Annual Physical Clearance</span>
-              <p className="text-base font-bold text-emerald-700 mt-1 flex items-center gap-1.5">
-                <CheckCircle2 className="h-4 w-4" />
-                Fit for Sports
-              </p>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Certified by Dr. P. Karki (Jan 2026)
-              </p>
-            </div>
-
-            <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-              <span className="text-slate-400 font-medium">Allergies & Dietary</span>
-              <p className="text-sm font-semibold text-slate-800 mt-1">
-                No Known Drug Allergies
-              </p>
-              <p className="text-[11px] text-slate-500 mt-1">
-                Vegetarian lunch preference
-              </p>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 5: FEES & DUES */}
-      {activeTab === "fees" && (
-        <div className="rounded-2xl border border-[#DDE5F0] bg-white p-6 shadow-2xs space-y-4">
-          <div className="flex items-center justify-between pb-3 border-b border-slate-100">
-            <div>
-              <h3 className="font-bold text-sm text-slate-900">
-                Fee Account & Transaction Ledger
-              </h3>
-              <p className="text-xs text-slate-500">
-                Quarterly tuition installments, receipts, and outstanding dues
-              </p>
-            </div>
-            <button
-              type="button"
-              onClick={() => toast.success("Collect fee counter opened")}
-              className="rounded-lg bg-[#1F9D6B] px-3.5 py-1.5 text-xs font-semibold text-white hover:bg-[#188056]"
-            >
-              Collect payment
-            </button>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 p-4 bg-slate-50 flex items-center justify-between">
-            <div>
-              <p className="text-xs text-slate-500">Outstanding Balance</p>
-              <p className="text-2xl font-bold text-slate-900">
-                {student.pendingDueNpr > 0
-                  ? `NPR ${student.pendingDueNpr.toLocaleString()}`
-                  : "NPR 0.00 (All dues cleared)"}
-              </p>
-            </div>
-            <span
-              className={cn(
-                "rounded-full px-3 py-1 text-xs font-bold",
-                student.feeStatus === "Paid"
-                  ? "bg-emerald-100 text-emerald-800"
-                  : "bg-rose-100 text-[#D64545]"
-              )}
-            >
-              {student.feeStatus}
-            </span>
-          </div>
-
-          <div className="overflow-x-auto rounded-xl border border-slate-200">
-            <table className="w-full text-left text-xs">
-              <thead>
-                <tr className="border-b border-slate-200 bg-slate-50 text-slate-500 font-medium">
-                  <th className="py-2.5 px-3">Date</th>
-                  <th className="py-2.5 px-3">Description</th>
-                  <th className="py-2.5 px-3">Receipt / Ref</th>
-                  <th className="py-2.5 px-3">Amount (NPR)</th>
-                  <th className="py-2.5 px-3 text-right">Status</th>
-                </tr>
-              </thead>
-              <tbody className="divide-y divide-slate-100">
-                {student.feeLedger.map((item) => (
-                  <tr key={item.id} className="hover:bg-slate-50/60">
-                    <td className="py-2.5 px-3 text-slate-600 font-mono">{item.date}</td>
-                    <td className="py-2.5 px-3 font-semibold text-slate-900">{item.title}</td>
-                    <td className="py-2.5 px-3 text-slate-500 font-mono">{item.receiptNo ?? "-"}</td>
-                    <td className="py-2.5 px-3 font-bold text-slate-900">
-                      NPR {item.amountNpr.toLocaleString()}
-                    </td>
-                    <td className="py-2.5 px-3 text-right">
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-[10px] font-semibold",
-                          item.status === "Paid"
-                            ? "bg-emerald-50 text-emerald-700"
-                            : "bg-rose-50 text-[#D64545]"
-                        )}
-                      >
-                        {item.status}
-                      </span>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        </div>
-      )}
-
-      {/* Tab 6: ATTENDANCE */}
-      {activeTab === "attendance" && (
-        <div className="rounded-2xl border border-[#DDE5F0] bg-white p-6 shadow-2xs space-y-4">
-          <div className="pb-3 border-b border-slate-100">
-            <h3 className="font-bold text-sm text-slate-900">
-              Session Attendance Record
-            </h3>
-            <p className="text-xs text-slate-500">
-              Tracking attendance rate and school day threshold
-            </p>
-          </div>
-
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div className="rounded-xl border border-slate-200 p-4 bg-slate-50">
-              <span className="text-xs text-slate-500">Total school days</span>
-              <p className="text-xl font-bold text-slate-900 mt-1">
-                {student.totalSchoolDays} days
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-200 p-4 bg-emerald-50/50">
-              <span className="text-xs text-emerald-700">Days present</span>
-              <p className="text-xl font-bold text-emerald-800 mt-1">
-                {student.totalPresentDays} days
-              </p>
-            </div>
-            <div className="rounded-xl border border-slate-200 p-4 bg-blue-50/50">
-              <span className="text-xs text-[#2570D3]">Attendance rate</span>
-              <p className="text-xl font-bold text-[#2570D3] mt-1">
-                {student.attendancePct}%
-              </p>
-            </div>
-          </div>
-
-          <div className="rounded-xl border border-slate-200 p-4">
-            <div className="flex justify-between text-xs text-slate-600 mb-2">
-              <span>Exam eligibility threshold (80.0%)</span>
-              <span className="font-semibold text-emerald-700">
-                {student.attendancePct >= 80 ? "Eligible" : "Warning: Below threshold"}
+        <section className="rounded-2xl border border-[#E7EDF6] bg-white p-[18px] shadow-2xs">
+          <div className="flex items-center justify-between gap-3 border-b border-[#F0F4FA] pb-3">
+            <h2 className="flex items-center gap-2.5 text-[15px] font-bold tracking-[-0.014em] text-[#0F243E]">
+              <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-lg bg-[#EFF6FF] text-[#3B82F6]">
+                <HeartPulse className="h-3.5 w-3.5" />
               </span>
-            </div>
-            <div className="h-2 w-full rounded-full bg-slate-100 overflow-hidden">
-              <div
-                className="h-full bg-[#1F9D6B] rounded-full"
-                style={{ width: `${student.attendancePct}%` }}
-              />
-            </div>
+              Health Records
+            </h2>
           </div>
-        </div>
+
+          {!canReadHealth ? (
+            <p className="flex items-center gap-2 py-4 text-[13.5px] text-[#5F7186]">
+              <ShieldCheck className="h-4 w-4 text-[#93A2B5]" />
+              Needs student.health.read. Every read of this panel is written to the audit log.
+            </p>
+          ) : health.isLoading ? (
+            <p className="py-4 text-[13.5px] text-[#93A3B6]">Loading health record…</p>
+          ) : health.error ? (
+            <p className="py-4 text-[13.5px] text-[#D64545]">Could not load the health record.</p>
+          ) : (
+            <div className="mt-2 grid gap-x-8 sm:grid-cols-2">
+              {(
+                [
+                  ["Allergies", health.data?.allergies],
+                  ["Medical conditions", health.data?.medicalConditions],
+                  ["Medications", health.data?.medications],
+                  ["Disability", health.data?.disabilityType],
+                  ["Doctor", health.data?.doctorName],
+                  ["Doctor phone", health.data?.doctorPhone],
+                  ["Insurance no", health.data?.insuranceNo],
+                  ["Emergency instructions", health.data?.emergencyInstructions],
+                ] as [string, string | null | undefined][]
+              ).map(([label, value]) => (
+                <Field key={label} label={label} value={value ?? null} />
+              ))}
+              <p className="mt-3 border-t border-[#F1F5F9] pt-3 text-[12px] leading-relaxed text-[#93A3B6] sm:col-span-2">
+                {health.data?.updatedAt
+                  ? `Last updated ${new Date(health.data.updatedAt).toLocaleString()}.`
+                  : "No health record saved yet — these fields are empty, not missing."}{" "}
+                Opening this panel wrote an audit row.
+              </p>
+            </div>
+          )}
+        </section>
       )}
 
-      {/* Printable ID Card Modal */}
-      <StudentIdCardModal
-        student={idCardOpen ? student : null}
-        onClose={() => setIdCardOpen(false)}
-      />
+      {/* ----------------------------------------------------------------- FEES */}
+      {activeTab === "fees" && (
+        <PendingModule
+          icon={Banknote}
+          title="Fee ledgers arrive with the finance module"
+          detail="Dues, payments and receipts have no backend yet, so no balance is shown here."
+          action={
+            <DisabledAction icon={Banknote} label="Collect fee" title="Waiting on the fees module" />
+          }
+        />
+      )}
+
+      {/* ----------------------------------------------------------- ATTENDANCE */}
+      {activeTab === "attendance" && (
+        <PendingModule
+          icon={CalendarCheck2}
+          title="Attendance arrives with the attendance module"
+          detail="Daily marking and percentage summaries need a register backend. No percentage appears until one exists."
+        />
+      )}
+
+      {/* ------------------------------------------------------------- EXAMS */}
+      {activeTab === "exams" && (
+        <PendingModule
+          icon={FileText}
+          title="Exam history arrives with the exams module"
+          detail="Sittings, marksheets and results have no backend yet, so this tab stays empty."
+        />
+      )}
+
+      {/* ------------------------------------------------------- STATUS HISTORY */}
+      {activeTab === "history" && (
+        <section className="rounded-2xl border border-[#E7EDF6] bg-white p-[18px] shadow-2xs">
+          <div className="flex items-center justify-between gap-3 border-b border-[#F0F4FA] pb-3">
+            <h2 className="flex items-center gap-2.5 text-[15px] font-bold tracking-[-0.014em] text-[#0F243E]">
+              <span className="grid h-[26px] w-[26px] shrink-0 place-items-center rounded-lg bg-[#EFF6FF] text-[#3B82F6]">
+                <History className="h-3.5 w-3.5" />
+              </span>
+              Status History
+            </h2>
+          </div>
+
+          {history.isLoading ? (
+            <p className="py-4 text-[13.5px] text-[#93A3B6]">Loading timeline…</p>
+          ) : (history.data?.length ?? 0) === 0 ? (
+            <p className="py-4 text-[13.5px] text-[#93A3B6]">No status changes recorded.</p>
+          ) : (
+            <ol className="relative ml-1.5 mt-3.5 border-l border-[#E6EDF7] pl-[18px]">
+              {history.data?.map((entry) => (
+                <li key={entry.id} className="relative pb-4 last:pb-0">
+                  <span className="absolute -left-[24px] top-[5px] grid h-[11px] w-[11px] place-items-center rounded-full border-2 border-white bg-[#2570D3]" />
+                  <div className="flex flex-wrap items-baseline gap-x-3 gap-y-1">
+                    <span className="text-[13px] font-semibold capitalize tracking-[-0.006em] text-[#1B3049]">
+                      {entry.fromStatus ? pretty(entry.fromStatus) : "—"} → {pretty(entry.toStatus)}
+                    </span>
+                    <span className="text-[11.5px] text-[#93A2B5] tabular-nums">
+                      {new Date(entry.changedAt).toLocaleString()}
+                    </span>
+                  </div>
+                  {entry.reason && (
+                    <p className="mt-0.5 text-[12.5px] leading-relaxed text-[#6B7C91]">
+                      {entry.reason}
+                    </p>
+                  )}
+                </li>
+              ))}
+            </ol>
+          )}
+        </section>
+      )}
+
+      {/* ---------------------------------------------------------- quick actions */}
+      <div className="flex flex-wrap items-center gap-2.5">
+        <button
+          type="button"
+          onClick={() => setIdCardOpen(true)}
+          className="inline-flex cursor-pointer items-center gap-2 rounded-full border border-[#E1E9F4] bg-white px-3.5 py-2 text-[13px] font-semibold tracking-[-0.003em] text-[#3F5266] shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-[#B7D0EF] hover:text-[#2570D3]"
+        >
+          <Printer className="h-3.5 w-3.5 text-[#2570D3]" />
+          Print ID card
+        </button>
+
+        <a
+          href={`tel:${primaryContact?.value ?? ""}`}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-full border border-[#E1E9F4] bg-white px-3.5 py-2 text-[13px] font-semibold tracking-[-0.003em] text-[#3F5266] shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-[#B7D0EF] hover:text-[#2570D3]",
+            !primaryContact && "pointer-events-none opacity-45"
+          )}
+        >
+          <Phone className="h-3.5 w-3.5 text-[#2570D3]" />
+          Call contact
+        </a>
+
+        <a
+          href={emailContact ? `mailto:${emailContact.value}` : undefined}
+          className={cn(
+            "inline-flex items-center gap-2 rounded-full border border-[#E1E9F4] bg-white px-3.5 py-2 text-[13px] font-semibold tracking-[-0.003em] text-[#3F5266] shadow-2xs transition-all duration-200 hover:-translate-y-0.5 hover:border-[#B7D0EF] hover:text-[#2570D3]",
+            !emailContact && "pointer-events-none opacity-45"
+          )}
+        >
+          <Mail className="h-3.5 w-3.5 text-[#2570D3]" />
+          Email
+        </a>
+
+        {addressLine && (
+          <span className="inline-flex items-center gap-2 rounded-full border border-[#E7EDF6] bg-white px-3.5 py-2 text-[12.5px] text-[#5F7186]">
+            <MapPin className="h-3.5 w-3.5 text-[#8FA0B6]" />
+            {addressLine}
+          </span>
+        )}
+
+        <span className="inline-flex items-center gap-2 rounded-full border border-[#E7EDF6] bg-white px-3.5 py-2 text-[12.5px] text-[#5F7186]">
+          <GraduationCap className="h-3.5 w-3.5 text-[#8FA0B6]" />
+          {student.emisId ? `EMIS ${student.emisId}` : "No EMIS issued"}
+        </span>
+      </div>
+
+      {idCardOpen && (
+        <StudentIdCardModal student={student} onClose={() => setIdCardOpen(false)} />
+      )}
+
+      {addGuardianOpen && (
+        <AddGuardianModal
+          studentId={student.id}
+          studentName={person.displayName}
+          hasPrimary={student.guardians.some((g) => g.isPrimary)}
+          onClose={() => setAddGuardianOpen(false)}
+        />
+      )}
     </div>
   );
 }

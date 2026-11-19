@@ -1,9 +1,80 @@
 "use client";
 
 import Link from "next/link";
-import { ArrowDownUp, ArrowRight, Building2, Eye, SearchX } from "lucide-react";
+import Image from "next/image";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
+import {
+  ArrowDownUp,
+  ArrowRight,
+  Building2,
+  Eye,
+  SearchX,
+} from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { rootDomain } from "@/lib/tenant-slug";
+import type { ApiEnvelope, PublicTenantConfig } from "@/lib/api/types";
 import type { School } from "./types";
+
+function SchoolLogo({ school }: { school: School }) {
+  const [failedUrl, setFailedUrl] = useState("");
+
+  const { data: url } = useQuery({
+    queryKey: [
+      "platform",
+      "school-logo",
+      school.id,
+      school.slug,
+      school.customDomain,
+    ],
+    enabled: school.status === "active",
+    retry: false,
+    queryFn: async ({ signal }) => {
+      const host = school.customDomain || `${school.slug}.${rootDomain()}`;
+      const baseUrl = (
+        process.env.NEXT_PUBLIC_API_URL ?? "http://localhost:4000"
+      ).replace(/\/+$/, "");
+
+      const response = await fetch(
+        `${baseUrl}/public/tenants/resolve?host=${encodeURIComponent(host)}`,
+        {
+          cache: "no-store",
+          credentials: "omit",
+          signal,
+        }
+      );
+
+      if (!response.ok) {
+        throw new Error("Could not load school logo");
+      }
+
+      const { data } =
+        (await response.json()) as ApiEnvelope<PublicTenantConfig>;
+
+      return data?.slug === school.slug && data.status === "active"
+        ? data.logoUrl ?? null
+        : null;
+    },
+  });
+
+  return (
+    <span className="grid size-9 shrink-0 place-items-center overflow-hidden rounded-lg bg-secondary text-sm font-semibold text-secondary-foreground">
+      {url && url !== failedUrl ? (
+        <Image
+          src={url}
+          alt={`${school.name} logo`}
+          width={36}
+          height={36}
+          unoptimized
+          className="size-full object-contain p-1"
+          onError={() => setFailedUrl(url)}
+        />
+      ) : (
+        school.name.charAt(0)
+      )}
+    </span>
+  );
+}
 
 export function SchoolTable({
   schools,
@@ -33,6 +104,7 @@ export function SchoolTable({
   onAdd?: () => void;
 }) {
   const filtered = Boolean(query) || statusFilter !== "all";
+
   return (
     <section id="schools" className="scroll-mt-24">
       <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
@@ -44,11 +116,13 @@ export function SchoolTable({
             Schools registered on the platform.
           </p>
         </div>
+
         <div className="flex items-center gap-2">
           <span className="rounded-lg border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground">
             {loading || error ? "—" : total}{" "}
             {total === 1 ? "school" : "schools"}
           </span>
+
           {overview && (
             <Button variant="outline" size="sm" asChild>
               <Link href="/dashboard?section=schools">
@@ -58,11 +132,13 @@ export function SchoolTable({
           )}
         </div>
       </div>
+
       <div className="overflow-hidden rounded-2xl border border-border bg-card shadow-sm">
         <div className="flex flex-wrap items-center justify-between gap-2 border-b border-border px-5 py-4">
           <p className="text-sm font-semibold text-foreground">
             {query ? `Search results for “${query}”` : "School directory"}
           </p>
+
           <div className="flex items-center gap-2">
             <select
               aria-label="Filter by school status"
@@ -76,16 +152,20 @@ export function SchoolTable({
               <option value="suspended">Suspended</option>
               <option value="failed">Failed</option>
             </select>
+
             <Button
               variant="ghost"
               size="sm"
               onClick={onSort}
-              aria-label={`Sort schools by name ${sortAscending ? "descending" : "ascending"}`}
+              aria-label={`Sort schools by name ${
+                sortAscending ? "descending" : "ascending"
+              }`}
             >
               <ArrowDownUp /> Name {sortAscending ? "A–Z" : "Z–A"}
             </Button>
           </div>
         </div>
+
         {loading ? (
           <div role="status" className="space-y-3 p-5">
             <span className="sr-only">Loading schools</span>
@@ -144,6 +224,7 @@ export function SchoolTable({
                     </th>
                   </tr>
                 </thead>
+
                 <tbody className="divide-y divide-border">
                   {schools.map((school) => (
                     <tr
@@ -152,9 +233,8 @@ export function SchoolTable({
                     >
                       <td className="px-4 py-3.5">
                         <div className="flex items-center gap-3">
-                          <span className="grid size-9 shrink-0 place-items-center rounded-lg bg-secondary text-sm font-semibold text-secondary-foreground">
-                            {school.name.charAt(0)}
-                          </span>
+                          <SchoolLogo school={school} />
+
                           <span>
                             <span className="block max-w-48 truncate font-semibold">
                               {school.name}
@@ -165,22 +245,28 @@ export function SchoolTable({
                           </span>
                         </div>
                       </td>
+
                       <td className="px-4 py-3.5 text-muted-foreground">
                         {school.plan}
                       </td>
+
                       <td className="px-4 py-3.5 text-muted-foreground">
                         {school.branch}
                       </td>
+
                       <td className="px-4 py-3.5 text-muted-foreground">—</td>
+
                       <td className="px-4 py-3.5">
                         <span className="inline-flex items-center gap-1.5 rounded-full bg-secondary px-2 py-1 text-[10px] font-semibold text-secondary-foreground">
                           <span className="size-1.5 rounded-full bg-secondary-foreground" />
                           <span className="capitalize">{school.status}</span>
                         </span>
                       </td>
+
                       <td className="whitespace-nowrap px-4 py-3.5 text-muted-foreground">
                         {school.joined.slice(0, 10)}
                       </td>
+
                       <td className="px-4 py-3.5 text-right">
                         <Button variant="outline" size="sm" asChild>
                           <Link
@@ -195,6 +281,7 @@ export function SchoolTable({
                 </tbody>
               </table>
             </div>
+
             {schools.length === 0 && (
               <div className="flex min-h-48 flex-col items-center justify-center px-4 py-8 text-center">
                 <span className="grid size-12 place-items-center rounded-2xl bg-secondary text-secondary-foreground">
@@ -204,14 +291,17 @@ export function SchoolTable({
                     <Building2 className="size-5" />
                   )}
                 </span>
+
                 <p className="mt-3 text-sm font-semibold">
                   {filtered ? "No matching schools" : "No schools yet"}
                 </p>
+
                 <p className="mt-1 text-xs text-muted-foreground">
                   {filtered
                     ? "Try a different search or filter."
                     : "Create a school to get started."}
                 </p>
+
                 {!filtered && onAdd && (
                   <Button
                     type="button"

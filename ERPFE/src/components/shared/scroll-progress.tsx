@@ -36,7 +36,7 @@ export function ScrollProgress({
         placement === "top" ? "top-0" : "bottom-0",
         className
       )}
-      style={{ scaleX, height, background }}
+      style={{ scaleX, transformOrigin: "0%", height, background }}
     />
   );
 }

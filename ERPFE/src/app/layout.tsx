@@ -5,6 +5,7 @@ import "./globals.css";
 import ThemeProvider from "@/providers/theme-provider";
 import { Toaster } from "@/components/ui/sonner";
 import { SessionBoot } from "@/components/auth/session-boot";
+import { ScrollProgress } from "@/components/shared/scroll-progress";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -34,6 +35,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable}`}
     >
       <body className="min-h-full flex flex-col">
+        <ScrollProgress />
         <ThemeProvider>
           <SessionBoot />
           <Toaster richColors position="top-right" />

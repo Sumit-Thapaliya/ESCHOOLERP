@@ -19,3 +19,9 @@ export function createTenant(input: CreateTenantInput) {
 export function updateTenantBranding(id: string, input: BrandingInput) {
   return put<PublicTenantConfig>(`/tenants/${id}/branding`, input);
 }
+
+export function uploadTenantBrandingImage(id: string, file: File) {
+  const form = new FormData();
+  form.append("file", file);
+  return post<{ url: string }>(`/tenants/${id}/branding/image`, form, { headers: { "Content-Type": undefined }, timeout: 75_000 });
+}

@@ -144,6 +144,23 @@
   body {
     @apply bg-background text-foreground;
   }
+  /*
+   * Tailwind's preflight leaves <button> with the default arrow cursor, so
+   * every clickable control in the app looked dead. One rule here fixes all of
+   * them at once, and disabled controls keep the "you cannot click me" look.
+   */
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]),
+  [role="tab"]:not([aria-disabled="true"]),
+  select:not(:disabled),
+  summary,
+  label[for] {
+    cursor: pointer;
+  }
+  button:disabled,
+  [aria-disabled="true"] {
+    cursor: not-allowed;
+  }
   html {
     @apply font-sans;
     scroll-padding-top: 80px;

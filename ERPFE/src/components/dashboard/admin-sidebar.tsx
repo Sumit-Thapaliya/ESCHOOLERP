@@ -3,6 +3,8 @@
 import * as React from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
+import { TenantLogo } from "@/components/tenant/tenant-logo";
+import { useOptionalTenant } from "@/providers/tenant-provider";
 import {
   LayoutDashboard,
   GraduationCap,
@@ -16,20 +18,37 @@ import {
   ChevronLeft,
   ChevronRight,
   School,
+  Users,
+  Briefcase,
+  HeartHandshake,
   X,
+  UsersRound,
 } from "lucide-react";
 import { cn } from "cn";
+import { useSession } from "@/store/session-store";
 
 export interface NavItem {
   title: string;
   href: string;
   icon: React.ComponentType<{ className?: string }>;
+  /**
+   * Permission code required to SEE the item. Omitted while a module is a
+   * design prototype (no backend yet) or while its codes are unseeded -
+   * hiding those would make working screens vanish from the nav.
+   */
+  permission?: string;
 }
 
 const NAV_MODULES: NavItem[] = [
   { title: "Dashboard", href: "/dashboard", icon: LayoutDashboard },
+  // Students: gate on "student.read" once the backend seeds student.* codes.
+  // Until then no role holds it and the item would disappear for everyone;
+  // the in-page card explains the missing permission instead.
   { title: "Students", href: "/students", icon: GraduationCap },
+  { title: "Guardians", href: "/guardians", icon: HeartHandshake },
+  { title: "Staff", href: "/staff", icon: Briefcase },
   { title: "Academics", href: "/academics", icon: BookOpen },
+  { title: "Users", href: "/users", icon: UsersRound, permission: "user.read" },
   { title: "Attendance", href: "/attendance", icon: CalendarCheck },
   { title: "Exams", href: "/examinations", icon: FileSpreadsheet },
   { title: "Fees", href: "/finance", icon: WalletCards },
@@ -52,6 +71,19 @@ export function AdminSidebar({
   onCloseMobile,
 }: AdminSidebarProps) {
   const pathname = usePathname();
+  const tenantContext = useOptionalTenant();
+
+  // School portal URLs are /t/<slug>/...; the platform plane has no prefix.
+  // Deriving it from the URL keeps one sidebar correct in both planes.
+  const tenantPrefix = React.useMemo(() => {
+    const m = /^\/t\/[^/]+/.exec(pathname ?? "");
+    return m ? m[0] : "";
+  }, [pathname]);
+
+  // Stable reference (not a fresh array) so the store selector stays cheap.
+  const user = useSession((s) => s.user);
+  const canSee = (item: NavItem) =>
+    !item.permission || (user?.permissions.includes(item.permission) ?? false);
 
   const isLinkActive = (href: string) => {
     if (href === "/dashboard") {
@@ -91,11 +123,15 @@ export function AdminSidebar({
         {/* Brand Header: School ERP with Graduation Cap Icon */}
         <div className="flex h-20 items-center justify-between px-6 border-b border-white/5">
           <Link
-            href="/dashboard"
+            href={`${tenantPrefix}/dashboard`}
             className="flex items-center gap-3 overflow-hidden"
           >
             <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-xl bg-white/10 text-white shadow-xs">
-              <School className="h-5 w-5 text-white" />
+              {tenantContext ? (
+                <TenantLogo className="h-10 w-10" />
+              ) : (
+                <School className="h-5 w-5 text-white" />
+              )}
             </div>
             {!collapsed && (
               <span className="font-bold text-lg tracking-tight text-white whitespace-nowrap">
@@ -115,16 +151,16 @@ export function AdminSidebar({
           </button>
         </div>
 
-        {/* Navigation list matching the 9 exact items in screenshot */}
+        {/* Permission-filtered, tenant-prefixed navigation list */}
         <div className="flex-1 overflow-y-auto px-4 py-6 space-y-2">
-          {NAV_MODULES.map((item) => {
+          {NAV_MODULES.filter(canSee).map((item) => {
             const Icon = item.icon;
             const active = isLinkActive(item.href);
 
             return (
               <Link
                 key={item.title}
-                href={item.href}
+                href={tenantPrefix + item.href}
                 onClick={onCloseMobile}
                 title={collapsed ? item.title : undefined}
                 className={cn(

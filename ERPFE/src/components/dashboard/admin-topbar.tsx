@@ -8,10 +8,9 @@ import {
   User,
   ShieldCheck,
   LogOut,
-  Bell,
 } from "lucide-react";
 import { MOCK_BRANCHES_LIST } from "./dashboard-mock-data";
-import { useOptionalTenant } from "@/providers/tenant-provider";
+import { useCurrentUser } from "@/store/session-store";
 import { cn } from "cn";
 
 interface AdminTopbarProps {
@@ -25,9 +24,27 @@ export function AdminTopbar({
   selectedBranchId,
   onSelectBranch,
 }: AdminTopbarProps) {
-  const tenantCtx = useOptionalTenant();
+  const user = useCurrentUser();
   const [branchMenuOpen, setBranchMenuOpen] = React.useState(false);
   const [profileOpen, setProfileOpen] = React.useState(false);
+
+  // Who is actually signed in - name, role and initials all come from
+  // GET /auth/me via the session store, never from a hardcoded placeholder.
+  const accountName = user?.name ?? user?.username ?? user?.email ?? "Signed-in user";
+  const accountRole = user?.roles[0]?.name ?? (user ? "No role assigned" : "Loading…");
+  const initials = accountName
+    .replace(/^(dr|mr|mrs|ms|prof)\.?\s+/i, "")
+    .split(/\s+/)
+    .filter(Boolean)
+    .slice(0, 2)
+    .map((part) => part[0]?.toUpperCase() ?? "")
+    .join("");
+  const greeting =
+    new Date().getHours() < 12
+      ? "Good morning"
+      : new Date().getHours() < 17
+        ? "Good afternoon"
+        : "Good evening";
 
   const currentBranch =
     MOCK_BRANCHES_LIST.find((b) => b.id === selectedBranchId) ??
@@ -48,7 +65,7 @@ export function AdminTopbar({
 
         <div>
           <h1 className="text-xl sm:text-2xl font-bold tracking-tight text-[#0F243E]">
-            Good Morning, Principal
+            {greeting}, {accountName.split(" ")[0]}
           </h1>
         </div>
       </div>
@@ -117,15 +134,8 @@ export function AdminTopbar({
             className="flex items-center rounded-full ring-2 ring-white hover:ring-[#1E6DEB] transition-all cursor-pointer shadow-xs"
             aria-label="User profile"
           >
-            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1A3353] text-white font-bold text-sm overflow-hidden">
-              <img
-                src="https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&w=120&h=120&q=80"
-                alt="Principal"
-                className="h-full w-full object-cover"
-                onError={(e) => {
-                  (e.target as HTMLElement).style.display = "none";
-                }}
-              />
+            <div className="flex h-10 w-10 items-center justify-center rounded-full bg-[#1A3353] text-white font-bold text-sm">
+              {initials || <User className="h-4 w-4" />}
             </div>
           </button>
 
@@ -143,8 +153,11 @@ export function AdminTopbar({
               />
               <div className="absolute right-0 mt-2 z-50 w-56 rounded-2xl border border-slate-200 bg-white p-2 shadow-xl text-xs">
                 <div className="px-3 py-2 border-b border-slate-100">
-                  <p className="font-bold text-slate-900">Dr. K.P. Adhikari</p>
-                  <p className="text-[11px] text-slate-500">School Principal</p>
+                  <p className="font-bold text-slate-900">{accountName}</p>
+                  <p className="text-[11px] text-slate-500">{accountRole}</p>
+                  {user?.email && (
+                    <p className="truncate text-[11px] text-slate-400">{user.email}</p>
+                  )}
                 </div>
                 <div className="py-1">
                   <a

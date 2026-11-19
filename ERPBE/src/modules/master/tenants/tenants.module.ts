@@ -6,6 +6,7 @@ import { TenantsController } from './controllers/tenants.controller';
 import { TenantBranding } from './entities/tenant-branding.master.entity';
 import { Tenant } from './entities/tenant.master.entity';
 import { BrandingService } from './services/branding.service';
+import { BrandingUploadService } from './services/branding-upload.service';
 import { FrontendRevalidateService } from './services/frontend-revalidate.service';
 import { TenantProvisioningService } from './services/tenant-provisioning.service';
 import { TenantResolverService } from './services/tenant-resolver.service';
@@ -18,6 +19,7 @@ import { TenantsService } from './services/tenants.service';
     TenantProvisioningService,
     TenantResolverService,
     BrandingService,
+    BrandingUploadService,
     FrontendRevalidateService,
   ],
   controllers: [TenantsController, PublicTenantsController],

@@ -1,4 +1,5 @@
-import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Req, UseGuards } from '@nestjs/common';
+import { Body, Controller, Get, Param, ParseUUIDPipe, Post, Put, Req, UploadedFile, UseGuards, UseInterceptors } from '@nestjs/common';
+import { FileInterceptor } from '@nestjs/platform-express';
 import { ApiOperation, ApiTags } from '@nestjs/swagger';
 import { ApiPlatformAuth } from '../../../../common/swagger/api-auth.decorators';
 import { ApiEnvelope, ApiErrors } from '../../../../common/swagger/api-response.decorators';
@@ -7,6 +8,7 @@ import { CreateTenantDto } from '../dto/create-tenant.dto';
 import { PublicTenantConfigDto, TenantViewDto } from '../dto/tenant.response.dto';
 import { UpdateBrandingDto } from '../dto/update-branding.dto';
 import { BrandingService } from '../services/branding.service';
+import { BrandingUploadService } from '../services/branding-upload.service';
 import { TenantProvisioningService } from '../services/tenant-provisioning.service';
 import { TenantsService } from '../services/tenants.service';
 
@@ -19,6 +21,7 @@ export class TenantsController {
     private svc: TenantsService,
     private provisioning: TenantProvisioningService,
     private branding: BrandingService,
+    private brandingUpload: BrandingUploadService,
   ) {}
 
   @Get()
@@ -28,7 +31,8 @@ export class TenantsController {
     return this.svc.list();
   }
 
-  /** Creates the tenant and its first principal. Retrying with the same slug resumes a failed attempt. */
+ /** Creates the tenant and its first principal. Retrying with the same slug resumes a failed attempt. */
+ 
   @Post()
   @ApiOperation({
     summary: 'Create a school',
@@ -44,6 +48,15 @@ export class TenantsController {
   })
   create(@Body() dto: CreateTenantDto, @Req() req: PlatformRequest) {
     return this.provisioning.create(dto, req.platformUser.id);
+  }
+
+  @Post(':id/branding/image')
+  @UseInterceptors(FileInterceptor('file', { limits: { fileSize: 5 * 1024 * 1024, files: 1, fields: 0 } }))
+  @ApiOperation({ summary: 'Upload a branding image' })
+  uploadBrandingImage(
+    @Param('id', ParseUUIDPipe) id: string,
+    @UploadedFile() file?: { buffer: Buffer; size: number; mimetype: string }) {
+    return this.brandingUpload.upload(id, file);
   }
 
   @Put(':id/branding')

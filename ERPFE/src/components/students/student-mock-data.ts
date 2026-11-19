@@ -519,3 +519,14 @@ export const GRADES_LIST = [
 ];
 
 export const SECTIONS_LIST = ["All sections", "A", "B", "C", "Science-A", "Science-B", "Management", "Lotus", "Rose"];
+
+export function getStudentById(id: string): Student | undefined {
+  if (!id) return undefined;
+  const decoded = decodeURIComponent(id).toLowerCase();
+  return MOCK_STUDENTS.find(
+    (s) =>
+      s.id.toLowerCase() === decoded ||
+      s.admissionNo.toLowerCase() === decoded ||
+      s.rollNo.toLowerCase() === decoded
+  );
+}
